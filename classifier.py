@@ -4,7 +4,7 @@ import torch.nn.functional as F
 from torch.nn.parameter import Parameter
 import math
 '''
-支持  AMClassifier,ArcClassifier,CircleClassifier
+支持  AMSoftmax,ArcFace,CircleLoss,DiscFace
 '''
 class FocalLoss(nn.Module):
     def __init__(self, gamma=0, eps=1e-7):
@@ -18,13 +18,13 @@ class FocalLoss(nn.Module):
         loss = (1 - p) ** self.gamma * logp
         return loss.mean()
 
-class AMClassifier(nn.Module):
+class AMSoftmax(nn.Module):
     '''
     在余弦相似度上加入间隔，加大类别间的区分能力
     AMSoftmax loss= cosθ - m
     '''
     def __init__(self, cfg):
-        super(AMClassifier, self).__init__()
+        super(AMSoftmax, self).__init__()
         self._feature_dim = cfg.feature_dim # 特征维数 128/512
         self._class_num = cfg.train_class_range[1]- cfg.train_class_range[0] # 类别总数
         self._scale = cfg.scale  # 特征模长缩放因子 论文推荐为30
@@ -66,7 +66,90 @@ class AMClassifier(nn.Module):
         losses = self._criterion(score, target).unsqueeze(dim=0)
         return losses
 
-class ArcClassifier(nn.Module):
+class DiscFace(nn.Module):
+    '''
+    DiscFace 可嵌入 任何基于Softmax的损失，此处以AMSoftmax举例
+    '''
+    def __init__(self, cfg):
+        super(DiscFace, self).__init__()
+        self._feature_dim = cfg.feature_dim # 特征维数 128/512
+        self._class_num = cfg.train_class_range[1]- cfg.train_class_range[0] # 类别总数
+        self._scale = cfg.scale  # 特征模长缩放因子 论文推荐为30
+        self._margin = cfg.margin  # 类别间隔  论文中表现好的是0.35~0.4
+        self._criterion = FocalLoss(gamma=2)  # Focal Loss
+
+        #####################################################
+        # DiscFace
+        self._λ= 0.4 # 控制系数，论文推荐0.4 or 0.6
+        
+        # b [class_num,feature_dim]
+        self.register_parameter(name='b', param=Parameter(torch.Tensor(self._class_num , self._feature_dim)))
+        stdv = 1. / math.sqrt(self.b.size(1))
+        self.b.data.uniform_(-stdv, stdv)
+        #####################################################
+
+        # 类别代理矩阵 [class_num,feature_dim]
+        self.register_parameter(name='id_agent', param=Parameter(torch.Tensor(self._class_num , self._feature_dim)))
+
+        # 初始化类别代理矩阵
+        stdv = 1. / math.sqrt(self.id_agent.size(1))
+        self.id_agent.data.uniform_(-stdv, stdv)
+
+    def forward(self,inputs):
+        # x [batch,class_num]   target[batch]
+        x, target = inputs
+        # x id_agent进行L2规范化，使得向量模长为1
+        x_normalized = F.normalize(x, p=2, dim=1)
+        self.id_agent.data = F.normalize(self.id_agent.data, p=2, dim=1)
+        
+        
+        #####################################################
+        # DiscFace
+        
+        # 式2 ε(x,y)= 规范后特征- 规范后类中心
+        w_batch=self.id_agent[target,:]
+        d=x_normalized-w_batch
+
+        # 求 位移偏差 对应每个类别的模长
+        b=self.b[target,:]
+        b_norm=b.norm(p=2,dim=1).unsqueeze(-1)
+        b_norm=torch.clamp(b_norm,min=0,max=0.05)
+
+        loss_disc=(d-F.normalize(b)*b_norm).norm(p=2,dim=1).mean()
+        #####################################################
+        
+        
+        
+        # 向量乘法公式(x→)*(y→) = |x| |y| cos θ   由于x,y模长为1，则结果为 特征与对应类中心夹角的余弦值cos θ
+        # 余弦相似度矩阵 [batch,feature_dim]
+        score = F.linear(x_normalized, self.id_agent)
+
+        # 训练时加入类别间隔margin，即将余弦相似度矩阵内 当前batch对应的相似度减去间隔
+        if self.training and self._margin > 0:
+            index_sample = torch.arange(0, x.shape[0]).long() # 真值标签的下标 [batch]
+            index_class = target.view(-1).long()   # 真值标签，即所属类别 [batch]
+            score[index_sample, index_class] = score[index_sample, index_class] - self._margin
+
+        # AM提出尺度因子s，转化到 半径为s的超球面
+        score = score * self._scale
+
+        # 交叉熵损失
+        # loss_softmax = F.nll_loss(F.log_softmax(score, dim=1), target)
+        # losses = loss_softmax.unsqueeze(dim=0)
+
+        # Focal Loss损失
+        # score[batch，class_num]   target[batch]
+        loss_score = self._criterion(score, target)
+
+
+        #####################################################
+        # DiscFace 
+        # 总损失
+        losses = (self._λ * loss_disc + loss_score).unsqueeze(dim=0)
+        #####################################################
+        return losses
+
+class ArcFace(nn.Module):
     """
     弧长度量相似度
     在余弦角度上加入间隔，加大类别间的区分能力
@@ -77,7 +160,7 @@ class ArcClassifier(nn.Module):
         '''
         :param easy_margin:   True:ArcFace,cos(θ+m)    False:ArcFace结合AMSoftmax,cos(θ+m1)-m2
         '''
-        super(ArcClassifier, self).__init__()
+        super(ArcFace, self).__init__()
         self._feature_dim = cfg.feature_dim # 特征维数 128/512
         self._class_num = cfg.train_class_range[1] - cfg.train_class_range[0]  # 类别总数
         self._criterion = FocalLoss(gamma=2)  # Focal Loss
@@ -128,7 +211,7 @@ class ArcClassifier(nn.Module):
         losses = self._criterion(output, label).unsqueeze(dim=0)
         return losses
 
-class CircleClassifier(nn.Module):
+class CircleLoss(nn.Module):
     '''
     在余弦角加入带权重的间隔，加大类别间的区分能力(CVPR2020 Oral)
     CircleLoss= cos(α*(Sn-m1)+β*(Sp-m2))    α,β是权重   m1,m2是间隔margin
@@ -136,7 +219,7 @@ class CircleClassifier(nn.Module):
     '''
 
     def __init__(self, cfg):
-        super(CircleClassifier, self).__init__()
+        super(CircleLoss, self).__init__()
         self._margin = cfg.margin # 类别间隔
         self._scale = cfg.scale # 特征模长缩放因子
         self._class_num = cfg.train_class_range[1]- cfg.train_class_range[0] # 类别总数

@@ -13,6 +13,7 @@
 |[ArcFace](https://arxiv.org/abs/1801.07698)|[原地址](https://github.com/cavalleria/cavaface.pytorch)|加法角间隔|CVPR2019|2020.9|
 |[CircleLoss](https://arxiv.org/abs/2002.10857)|[原地址](https://github.com/xialuxi/CircleLoss_Face)|加权角间隔|CVPR2020|2020.9|
 |[DiscFace](https://openaccess.thecvf.com/content/ACCV2020/html/Kim_DiscFace_Minimum_Discrepancy_Learning_for_Deep_Face_Recognition_ACCV_2020_paper.html)|复现|最小化差异学习|ACCV2020|2020.12|
+|[NPCFace](https://arxiv.org/abs/2007.10172)|复现(准备开源)|正负联合监督||2020.12|
 
 决策边界
 
@@ -26,9 +27,12 @@
 |CurricularFace|![](imgs/CurricularFace.gif)|
 ## 论文解读
 
-- [CenterLoss:A Discriminative Feature Learning Approach for Deep Face Recognition](#CenterLoss:A Discriminative Feature Learning Approach for Deep Face Recognition)
-- [ArcFace: Additive Angular Margin Loss for Deep Face Recognition](#ArcFace: Additive Angular Margin Loss for Deep Face Recognition)
-- [DiscFace: Minimum Discrepancy Learning for Deep Face Recognition](#DiscFace: Minimum Discrepancy Learning for Deep Face Recognition)
+- [CenterLoss:A Discriminative Feature Learning Approach for Deep Face Recognition](#centerloss-a-discriminative-feature-learning-approach-for-deep-face-recognition)
+- [ArcFace: Additive Angular Margin Loss for Deep Face Recognition](#arcface--additive-angular-margin-loss-for-deep-face-recognition)
+- [DiscFace: Minimum Discrepancy Learning for Deep Face Recognition](#discface--minimum-discrepancy-learning-for-deep-face-recognition)
+- [NPCFace: A Negative-Positive Cooperation Supervision for Training Large-scale Face Recognition](#npcface--a-negative-positive-cooperation-supervision-for-training-large-scale-face-recognition)
+
+<small><i><a href='http://ecotrust-canada.github.io/markdown-toc/'>Table of contents generated with markdown-toc</a></i></small>
 
 ### CenterLoss:A Discriminative Feature Learning Approach for Deep Face Recognition
 
@@ -60,8 +64,13 @@ ACCV2020
 | 原理   | ![](imgs/DiscFace.png)                                       |
 | 好处   | 1. 适用于 “类别不平衡” 及 “类别数量大，类内样本少”  的数据集。<br/>2. 容易嵌入CosFace\ArcFace等基于Softmax的分类器中。 |
 
+### NPCFace: A Negative-Positive Cooperation Supervision for Training Large-scale Face Recognition
 
-
-
+| 主题   | 描述                                                         |
+| ------ | :----------------------------------------------------------- |
+| 问题   | 1. 大规模人脸识别下，正类与负类存在大量难样例。<br/>2. 当前方法仅关注正类边界or负类边界，忽略了正负对数之间间隔的相关性。 |
+| 创新点 | 1. 灵感来源：当某个样本为正类难样例，通常也可能是负类难样例。<br/>2. 提出样本级别的正负对数间隔明确关系，强调正负类的难样例。<br/>3. 提出正负联合监督损失NPC，通过难样例提升性能。 |
+| 原理   | 1. 正负对数的难样例独立计算。<br/>2. 正对数监督：以ArcFace为基础，引入自定义的加法间隔m，对难易样例各种加间隔。<br/>3. 负对数监督：以MV-Softmax为基础，分离加法间隔和乘法间隔，实现稳定训练且加强难样例监督。针对难样例，通过超参t（代表尺度）引入乘法间隔，超参α（代表位移调整）引入加法间隔。 |
+| 好处   | 正负对数监督可灵活组合，适用大规模人脸识别。                 |
 
 

@@ -13,7 +13,7 @@
 |[ArcFace](https://arxiv.org/abs/1801.07698)|[原地址](https://github.com/cavalleria/cavaface.pytorch)|加法角间隔|CVPR2019|2020.9|
 |[CircleLoss](https://arxiv.org/abs/2002.10857)|[原地址](https://github.com/xialuxi/CircleLoss_Face)|加权角间隔|CVPR2020|2020.9|
 |[DiscFace](https://openaccess.thecvf.com/content/ACCV2020/html/Kim_DiscFace_Minimum_Discrepancy_Learning_for_Deep_Face_Recognition_ACCV_2020_paper.html)|复现|最小化差异学习|ACCV2020|2020.12|
-|[NPCFace](https://arxiv.org/abs/2007.10172)|复现(准备开源)|正负联合监督||2020.12|
+|[NPCFace](https://arxiv.org/abs/2007.10172)|复现|正负联合监督||2020.12|
 
 决策边界
 

@@ -4,7 +4,7 @@ import torch.nn.functional as F
 from torch.nn.parameter import Parameter
 import math
 '''
-支持  AMSoftmax,ArcFace,CircleLoss,DiscFace
+支持  AMSoftmax,ArcFace,CircleLoss,DiscFace_AM,NPCFace
 '''
 class FocalLoss(nn.Module):
     def __init__(self, gamma=0, eps=1e-7):
@@ -66,7 +66,7 @@ class AMSoftmax(nn.Module):
         losses = self._criterion(score, target).unsqueeze(dim=0)
         return losses
 
-class DiscFace(nn.Module):
+class DiscFace_AM(nn.Module):
     '''
     DiscFace 可嵌入 任何基于Softmax的损失，此处以AMSoftmax举例
     '''
@@ -271,4 +271,63 @@ class CircleLoss(nn.Module):
         return loss.mean()
 
 
+class NPCFace(nn.Module):
+    """
+    正对数：以ArcFace为基础
+    负对数：以MV-Softmax为基础
+    """
+    def __init__(self, cfg, s=32.0, t=1.1,α=0.25,m0=0.4,m1=0.2):
 
+        super(NPCFace, self).__init__()
+        self._criterion = FocalLoss(gamma=2)  # Focal Loss
+
+        self._feature_dim = cfg.feature_dim  # 特征维度
+        self._class_num = cfg.class_range[1] - cfg.class_range[0]  # 类别数
+
+        self.s = s
+        self.t = t
+        self.α = α
+        self.m0 = m0
+        self.m1 = m1
+
+        self.id_agent = Parameter(torch.FloatTensor(self._class_num, self._feature_dim))
+        self.id_agent.data.uniform_(-1, 1).renorm_(2, 1, 1e-5).mul_(1e5)
+
+    def forward(self,inputs):
+        input, label=inputs
+        batch_size = label.size(0)
+
+        input = F.normalize(input, p=2, dim=1)
+        self.id_agent.data = F.normalize(self.id_agent.data, p=2, dim=1)
+        cos_theta = F.linear(input,self.id_agent)
+
+        # 计算相似度矩阵
+        cos_theta = cos_theta.clamp(-1, 1)
+        # 从cos_theta 取出  当前batch对应类的预测余弦值 [batch,1]
+        gt = cos_theta[torch.arange(0, batch_size), label].view(-1, 1)
+        ###############确定难样例#########################
+        # score> arcface_gt
+        mask = cos_theta > torch.cos(torch.acos(gt) + self.m0)
+        mask[torch.arange(0, batch_size), label]=0 # mask正对数从1改为0
+        ###############负对数加间隔#########################
+        hard_vector = cos_theta[mask]  # 根据下标mask拿到 难样例对应值
+        cos_theta[mask] = self.t * hard_vector + self.α
+        ###############正对数加间隔#########################
+        mi = torch.full([batch_size], self.m0).to(input.device)
+        positive_hard_mask=torch.sum(mask, 1)>0
+        mask_hard=mask[positive_hard_mask]
+        cos_theta_hard=cos_theta[positive_hard_mask]
+        λ=torch.sum(mask_hard*cos_theta_hard,1) / torch.sum(mask_hard,1)
+        mi[positive_hard_mask]+=  λ * self.m1  # 式11
+
+
+        cos_theta_m = torch.cos(torch.acos(gt)+mi.view(-1, 1)) # arcface 计算cos(θ+m)
+
+        final_gt= torch.where(gt > 0, cos_theta_m, gt) #gt>0即角度<90°
+        cos_theta.scatter_(1, label.view(-1, 1).long(), final_gt)
+        ###############扩展超球面并计算损失#########################
+        cos_theta *= self.s
+
+        # 计算损失  使用focal loss or CrossEntropy
+        losses = self._criterion(cos_theta, label).unsqueeze(dim=0)
+        return losses
